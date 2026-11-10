@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OK.ru 動画検索</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --text: #e8eaf0;
+    --sub: #9aa3b2; --accent: #4f9cf9; --accent2: #7fd19c; --border: #2a2f3a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 10; background: var(--panel);
+           border-bottom: 1px solid var(--border); padding: 10px 16px; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #q { flex: 1 1 260px; min-width: 220px; padding: 10px 14px; font-size: 16px;
+       border-radius: 10px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); }
+  select, button { padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border);
+       background: var(--panel2); color: var(--text); font-size: 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border: none; }
+  button.primary:hover { filter: brightness(1.1); }
+  .meta { color: var(--sub); font-size: 13px; margin-top: 8px; display: flex; gap: 14px; flex-wrap: wrap; }
+  main { padding: 16px; }
+  .grid { display: grid; gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+          overflow: hidden; display: flex; flex-direction: column; text-decoration: none; color: inherit;
+          transition: transform .12s ease, border-color .12s ease; }
+  .card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .thumbwrap { position: relative; aspect-ratio: 16/9; background: #000 center/cover no-repeat; }
+  .thumbwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.75);
+         padding: 2px 7px; border-radius: 6px; font-size: 12px; }
+  .card .info { padding: 10px 12px 12px; }
+  .card .t { font-size: 14px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3;
+             -webkit-box-orient: vertical; overflow: hidden; }
+  .card .d { margin-top: 6px; color: var(--sub); font-size: 12px; }
+  mark { background: #ffd75e; color: #000; border-radius: 3px; padding: 0 2px; }
+  #status { color: var(--sub); }
+  .empty { color: var(--sub); text-align: center; padding: 60px 0; }
+  details.adv { color: var(--sub); font-size: 13px; margin-top: 8px; }
+  details.adv summary { cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <input id="q" type="search" placeholder="タイトル検索(スペース区切りでAND)…" autofocus>
+    <select id="year"><option value="">全期間</option></select>
+    <select id="sort">
+      <option value="new">新しい順</option>
+      <option value="old">古い順</option>
+      <option value="dur-desc">長い順</option>
+      <option value="dur-asc">短い順</option>
+      <option value="title">タイトル順</option>
+    </select>
+    <button class="primary" id="sync">更新(再取得)</button>
+  </div>
+  <div class="meta">
+    <span>動画数: <b id="count">-</b></span>
+    <span>表示: <b id="shown">-</b></span>
+    <span id="last-update"></span>
+    <span id="status"></span>
+    <details class="adv"><summary>使い方</summary>
+      <div>・スペース区切りで AND 検索(例: 片山紗希 2026)<br>
+      ・カードをクリックすると OK.ru の動画ページが開きます<br>
+      ・「更新」で本人投稿一覧を取り直します(数分かかることがあります)</div>
+    </details>
+  </div>
+</header>
+<main>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" hidden>該当する動画がありません</div>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+let VIDEOS = [];
+let marked = new Map(); // card element -> tokens
+
+function parseDur(s) { // "7:45" / "1:02:03"
+  if (!s) return null;
+  const p = s.split(":").map(Number);
+  if (p.some(isNaN)) return null;
+  return p.reduce((a, b) => a * 60 + b, 0);
+}
+
+function fmtDur(sec) {
+  if (sec == null) return "";
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0");
+}
+
+function esc(s) { return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function hl(text, tokens) {
+  let out = esc(text);
+  for (const tk of tokens) {
+    if (!tk) continue;
+    const rx = new RegExp("(" + tk.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
+    out = out.replace(rx, "<mark>$1</mark>");
+  }
+  return out;
+}
+
+function tokenMatch(title, tokens) {
+  const t = title.toLowerCase();
+  return tokens.every(tk => t.includes(tk.toLowerCase()));
+}
+
+function dataUrl(v) {
+  return v.thumb ? "thumbs/" + encodeURIComponent(v.thumb) : "";
+}
+
+async function load() {
+  const j = await (await fetch("data/videos.json", { cache: "no-store" })).json();
+  VIDEOS = j.list || [];
+  $("#last-update").textContent = "最終取得: " + (j.generated || "?");
+  // year options
+  const years = [...new Set(VIDEOS.filter(v => v.date).map(v => v.date.slice(0, 4)))].sort().reverse();
+  const ysel = $("#year");
+  for (const y of years) ysel.add(new Option(y, y));
+  $("#count").textContent = VIDEOS.length;
+  render();
+}
+
+function render() {
+  const tokens = $("#q").value.trim().split(/\s+/).filter(Boolean);
+  const year = $("#year").value;
+  const sort = $("#sort").value;
+  let list = VIDEOS.filter(v => tokenMatch(v.title, tokens));
+  if (year) list = list.filter(v => (v.date || "").startsWith(year));
+  list = [...list];
+  const val = (v) => (v.ts != null ? v.ts : -Number(v.id || 0));
+  if (sort === "new") list.sort((a, b) => val(b) - val(a));
+  else if (sort === "old") list.sort((a, b) => val(a) - val(b));
+  else if (sort === "title") list.sort((a, b) => a.title.localeCompare(b.title, "ja"));
+  else if (sort.startsWith("dur")) {
+    const d = sort.endsWith("-desc") ? -1 : 1;
+    list.sort((a, b) => d * ((a.dur ?? 0) - (b.dur ?? 0)));
+  }
+  $("#shown").textContent = list.length;
+  $("#empty").hidden = list.length > 0;
+  const g = $("#grid"); g.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  for (const v of list) {
+    const a = document.createElement("a");
+    a.className = "card"; a.href = v.url; a.target = "_blank"; a.rel = "noopener";
+    const th = v.thumb ? `<img loading="lazy" src="thumbs/${encodeURIComponent(v.thumb)}" alt="">` : "";
+    a.innerHTML = `
+      <div class="thumbwrap">${th}${v.durStr ? `<span class="dur">${esc(v.durStr)}</span>` : ""}</div>
+      <div class="info">
+        <div class="t">${hl(v.title, tokens)}</div>
+        <div class="d">${v.approx ? "≈ " : ""}${v.date || ""}${v.date ? " / " : ""}${v.durStr ? "⏱ " + esc(v.durStr) : ""}</div>
+      </div>`;
+    frag.appendChild(a);
+  }
+  g.appendChild(frag);
+}
+
+async function sync() {
+  const btn = $("#sync"); btn.disabled = true;
+  $("#status").textContent = "取得中…(ブラウザを開く場合は少し待ってください)";
+  try {
+    const r = await fetch("/api/sync", { method: "POST" });
+    const j = await r.json();
+    if (j.ok) {
+      $("#status").textContent = "完了";
+      await load();
+    } else { $("#status").textContent = "失敗: " + (j.error || "?"); }
+  } catch (e) { $("#status").textContent = "エラー: " + e; }
+  btn.disabled = false;
+}
+
+$("#q").addEventListener("input", () => render());
+$("#year").addEventListener("change", render);
+$("#sort").addEventListener("change", render);
+$("#sync").addEventListener("click", sync);
+load();
+</script>
+</body>
+</html>
