@@ -62,6 +62,7 @@
     <datalist id="alb-list"></datalist>
     <button id="alblist-btn" title="チャンネル一覧">📋 一覧</button>
     <select id="year"><option value="">全期間</option></select>
+    <select id="mon" disabled><option value="">全月</option></select>
     <select id="sort">
       <option value="new">新しい順</option>
       <option value="old">古い順</option>
@@ -144,21 +145,51 @@ async function load() {
     ALBUMS.map(a => `<option value="${esc(a.name)}">${a.count}件</option>`).join("");
   if (cur && cur !== "未所属" && !ALBUMS.some(a => a.name === cur)) albSel.value = "";
   $("#last-update").textContent = "最終取得: " + (j.generated || "?");
-  // year options
+  // year options(自動更新で再構築しても重複しないように詰め直す)
   const years = [...new Set(VIDEOS.filter(v => v.date).map(v => v.date.slice(0, 4)))].sort().reverse();
   const ysel = $("#year");
+  const curY = ysel.value;
+  ysel.options.length = 1;
   for (const y of years) ysel.add(new Option(y, y));
+  if (curY && years.includes(curY)) ysel.value = curY;
+  updateMonthOptions();
   $("#count").textContent = VIDEOS.length;
   render();
+}
+
+function updateMonthOptions() {
+  // 選択中の年内に存在する月だけを出す(年未選択なら無効化)
+  const year = $("#year").value;
+  const msel = $("#mon");
+  const curM = msel.value;
+  msel.options.length = 1;
+  msel.disabled = !year;
+  if (!year) {
+    msel.value = "";
+    return;
+  }
+  const counts = {};
+  for (const v of VIDEOS) {
+    if ((v.date || "").startsWith(year)) {
+      const m = v.date.slice(5, 7);
+      if (m) counts[m] = (counts[m] || 0) + 1;
+    }
+  }
+  const months = Object.keys(counts).sort().reverse();
+  for (const m of months) msel.add(new Option(`${m}月 (${counts[m]})`, `${year}.${m}`));
+  if (curM && months.includes(curM.slice(5, 7))) msel.value = curM;
+  else msel.value = "";
 }
 
 function render() {
   const tokens = $("#q").value.trim().split(/\s+/).filter(Boolean);
   const year = $("#year").value;
+  const mon = $("#mon").value;
   const alb = $("#alb").value.trim();
   const sort = $("#sort").value;
   let list = VIDEOS.filter(v => tokenMatch(v.title, tokens));
-  if (year) list = list.filter(v => (v.date || "").startsWith(year));
+  if (mon) list = list.filter(v => (v.date || "").startsWith(mon));
+  else if (year) list = list.filter(v => (v.date || "").startsWith(year));
   if (alb) {
     if (alb === "未所属") {
       list = list.filter(v => !v.albs || !v.albs.length);
@@ -217,7 +248,8 @@ async function sync() {
 $("#q").addEventListener("input", () => render());
 $("#alb").addEventListener("input", () => render());
 $("#alb").addEventListener("change", () => render());
-$("#year").addEventListener("change", render);
+$("#year").addEventListener("change", () => { updateMonthOptions(); render(); });
+$("#mon").addEventListener("change", render);
 $("#sort").addEventListener("change", render);
 $("#sync").addEventListener("click", sync);
 
