@@ -52,6 +52,14 @@
     border-radius: 8px; cursor: pointer; font-size: 14px; }
   .albitem:hover { background: var(--panel2); }
   .albitem .c { color: var(--sub); font-size: 12px; flex-shrink: 0; }
+  .copybtn { position: absolute; top: 6px; right: 6px; z-index: 2;
+    background: rgba(0,0,0,.55); border: none; border-radius: 8px;
+    color: #fff; font-size: 14px; line-height: 1; padding: 6px 7px; cursor: pointer; }
+  #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    background: #2a2f3a; color: #fff; border: 1px solid var(--border);
+    padding: 10px 18px; border-radius: 10px; font-size: 14px; z-index: 99;
+    opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -93,6 +101,7 @@
   <h3>📁 チャンネル一覧</h3>
   <div id="albpanel-list"></div>
 </aside>
+<div id="toast"></div>
 <script>
 const $ = (s) => document.querySelector(s);
 let VIDEOS = [];
@@ -221,7 +230,7 @@ function render() {
       ? `<img loading="lazy" src="thumbs/${encodeURIComponent(v.thumb)}" alt="">`
       : (v.tr ? `<img loading="lazy" src="${esc(v.tr)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : "");
     a.innerHTML = `
-      <div class="thumbwrap">${th}${v.durStr ? `<span class="dur">${esc(v.durStr)}</span>` : ""}</div>
+      <div class="thumbwrap">${th}<button class="copybtn" title="URLをコピー">🔗</button>${v.durStr ? `<span class="dur">${esc(v.durStr)}</span>` : ""}</div>
       <div class="info">
         <div class="t">${hl(v.title, tokens)}</div>
         <div class="d">${v.approx ? "≈ " : ""}${v.date || ""}${v.date ? " / " : ""}${(v.albs && v.albs.length) ? "📁 " + esc(v.albs[0]) + " / " : ""}${v.durStr ? "⏱ " + esc(v.durStr) : ""}</div>
@@ -244,6 +253,44 @@ async function sync() {
   } catch (e) { $("#status").textContent = "エラー: " + e; }
   btn.disabled = false;
 }
+
+async function copyText(s) {
+  try { await navigator.clipboard.writeText(s); return true; }
+  catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = s; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e2) {}
+    ta.remove(); return ok;
+  }
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+const gridEl = $("#grid");
+// 右クリック/長押しでURLコピー
+gridEl.addEventListener("contextmenu", async (e) => {
+  const card = e.target.closest("a.card");
+  if (!card) return;
+  e.preventDefault();
+  toast((await copyText(card.href)) ? "URLをコピーしました" : "コピーできませんでした");
+});
+// 🔗ボタン(動画ページには飛ばない)
+gridEl.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".copybtn");
+  if (!btn) return;
+  e.preventDefault(); e.stopPropagation();
+  const card = btn.closest("a.card");
+  toast((await copyText(card.href)) ? "URLをコピーしました" : "コピーできませんでした");
+});
 
 $("#q").addEventListener("input", () => render());
 $("#alb").addEventListener("input", () => render());
