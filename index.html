@@ -111,7 +111,7 @@ function fmtDur(sec) {
   return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0");
 }
 
-function esc(s) { return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 function hl(text, tokens) {
   let out = esc(text);
@@ -139,7 +139,7 @@ async function load() {
   const albSel = $("#alb");
   const cur = albSel.value;
   $("#alb-list").innerHTML = ALBUMS.map(a =>
-    `<option value="${esc(a.name)}">${esc(a.count)}件</option>`).join("");
+    `<option value="${esc(a.name)}">${a.count}件</option>`).join("");
   if (cur && !ALBUMS.some(a => a.name === cur)) albSel.value = "";
   $("#last-update").textContent = "最終取得: " + (j.generated || "?");
   // year options
@@ -157,7 +157,13 @@ function render() {
   const sort = $("#sort").value;
   let list = VIDEOS.filter(v => tokenMatch(v.title, tokens));
   if (year) list = list.filter(v => (v.date || "").startsWith(year));
-  if (alb) list = list.filter(v => (v.albs || []).some(name => name.includes(alb)));
+  if (alb) {
+    // チャンネル名と完全一致ならそのチャンネルだけ、それ以外は部分一致
+    const exact = ALBUMS.some(a => a.name === alb);
+    list = exact
+      ? list.filter(v => (v.albs || []).includes(alb))
+      : list.filter(v => (v.albs || []).some(name => name.includes(alb)));
+  }
   list = [...list];
   const val = (v) => (v.ts != null ? v.ts : -Number(v.id || 0));
   if (sort === "new") list.sort((a, b) => val(b) - val(a));
