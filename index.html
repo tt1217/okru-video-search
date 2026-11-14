@@ -42,12 +42,25 @@
   .empty { color: var(--sub); text-align: center; padding: 60px 0; }
   details.adv { color: var(--sub); font-size: 13px; margin-top: 8px; }
   details.adv summary { cursor: pointer; }
+  #albpanel { position: fixed; top: 0; right: 0; bottom: 0; width: min(320px, 90vw);
+    background: var(--panel); border-left: 1px solid var(--border); z-index: 50;
+    overflow-y: auto; padding: 14px; display: none; }
+  #albpanel.open { display: block; }
+  #albpanel h3 { margin: 0 0 10px; font-size: 15px; color: var(--text); }
+  #albpanel .x { float: right; background: none; border: none; color: var(--sub); font-size: 18px; cursor: pointer; }
+  .albitem { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px;
+    border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .albitem:hover { background: var(--panel2); }
+  .albitem .c { color: var(--sub); font-size: 12px; flex-shrink: 0; }
 </style>
 </head>
 <body>
 <header>
   <div class="bar">
     <input id="q" type="search" placeholder="タイトル検索(スペース区切りでAND)…" autofocus>
+    <input id="alb" list="alb-list" type="search" placeholder="チャンネル選択(入力で候補)" style="width:180px">
+    <datalist id="alb-list"></datalist>
+    <button id="alblist-btn" title="チャンネル一覧">📋 一覧</button>
     <select id="year"><option value="">全期間</option></select>
     <select id="sort">
       <option value="new">新しい順</option>
@@ -74,9 +87,15 @@
   <div id="grid" class="grid"></div>
   <div id="empty" class="empty" hidden>該当する動画がありません</div>
 </main>
+<aside id="albpanel">
+  <button class="x" id="albpanel-x">✕</button>
+  <h3>📁 チャンネル一覧</h3>
+  <div id="albpanel-list"></div>
+</aside>
 <script>
 const $ = (s) => document.querySelector(s);
 let VIDEOS = [];
+let ALBUMS = [];
 let marked = new Map(); // card element -> tokens
 
 function parseDur(s) { // "7:45" / "1:02:03"
@@ -116,6 +135,12 @@ function dataUrl(v) {
 async function load() {
   const j = await (await fetch("data/videos.json", { cache: "no-store" })).json();
   VIDEOS = j.list || [];
+  ALBUMS = j.albums || [];
+  const albSel = $("#alb");
+  const cur = albSel.value;
+  $("#alb-list").innerHTML = ALBUMS.map(a =>
+    `<option value="${esc(a.name)}">${esc(a.count)}件</option>`).join("");
+  if (cur && !ALBUMS.some(a => a.name === cur)) albSel.value = "";
   $("#last-update").textContent = "最終取得: " + (j.generated || "?");
   // year options
   const years = [...new Set(VIDEOS.filter(v => v.date).map(v => v.date.slice(0, 4)))].sort().reverse();
@@ -128,9 +153,11 @@ async function load() {
 function render() {
   const tokens = $("#q").value.trim().split(/\s+/).filter(Boolean);
   const year = $("#year").value;
+  const alb = $("#alb").value.trim();
   const sort = $("#sort").value;
   let list = VIDEOS.filter(v => tokenMatch(v.title, tokens));
   if (year) list = list.filter(v => (v.date || "").startsWith(year));
+  if (alb) list = list.filter(v => (v.albs || []).some(name => name.includes(alb)));
   list = [...list];
   const val = (v) => (v.ts != null ? v.ts : -Number(v.id || 0));
   if (sort === "new") list.sort((a, b) => val(b) - val(a));
@@ -152,7 +179,7 @@ function render() {
       <div class="thumbwrap">${th}${v.durStr ? `<span class="dur">${esc(v.durStr)}</span>` : ""}</div>
       <div class="info">
         <div class="t">${hl(v.title, tokens)}</div>
-        <div class="d">${v.approx ? "≈ " : ""}${v.date || ""}${v.date ? " / " : ""}${v.durStr ? "⏱ " + esc(v.durStr) : ""}</div>
+        <div class="d">${v.approx ? "≈ " : ""}${v.date || ""}${v.date ? " / " : ""}${(v.albs && v.albs.length) ? "📁 " + esc(v.albs[0]) + " / " : ""}${v.durStr ? "⏱ " + esc(v.durStr) : ""}</div>
       </div>`;
     frag.appendChild(a);
   }
@@ -174,10 +201,37 @@ async function sync() {
 }
 
 $("#q").addEventListener("input", () => render());
+$("#alb").addEventListener("input", () => render());
+$("#alb").addEventListener("change", () => render());
 $("#year").addEventListener("change", render);
 $("#sort").addEventListener("change", render);
 $("#sync").addEventListener("click", sync);
+
+// チャンネル一覧パネル
+function renderAlbPanel() {
+  const box = $("#albpanel-list");
+  const items = [...ALBUMS].sort((a, b) => (b.count || 0) - (a.count || 0) || a.name.localeCompare(b.name, "ja"));
+  if (!items.length) {
+    box.innerHTML = '<div style="color:var(--sub);font-size:13px">データ取得中…(更新実行後に表示されます)</div>';
+    return;
+  }
+  box.innerHTML = items.map(a =>
+    `<div class="albitem" data-name="${esc(a.name)}"><span>${esc(a.name)}</span><span class="c">${a.count}</span></div>`).join("");
+  for (const el of box.querySelectorAll(".albitem")) {
+    el.addEventListener("click", () => {
+      $("#alb").value = el.dataset.name;
+      $("#albpanel").classList.remove("open");
+      render();
+    });
+  }
+}
+$("#alblist-btn").addEventListener("click", () => { renderAlbPanel(); $("#albpanel").classList.add("open"); });
+$("#albpanel-x").addEventListener("click", () => $("#albpanel").classList.remove("open"));
+
 load();
+// 5分ごと+タブ再表示時に最新データを取り直す
+setInterval(() => load(), 5 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 </script>
 </body>
 </html>
