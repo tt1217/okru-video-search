@@ -180,7 +180,9 @@ function render() {
   for (const v of list) {
     const a = document.createElement("a");
     a.className = "card"; a.href = v.url; a.target = "_blank"; a.rel = "noopener";
-    const th = v.thumb ? `<img loading="lazy" src="thumbs/${encodeURIComponent(v.thumb)}" alt="">` : "";
+    const th = v.thumb
+      ? `<img loading="lazy" src="thumbs/${encodeURIComponent(v.thumb)}" alt="">`
+      : (v.tr ? `<img loading="lazy" src="${esc(v.tr)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : "");
     a.innerHTML = `
       <div class="thumbwrap">${th}${v.durStr ? `<span class="dur">${esc(v.durStr)}</span>` : ""}</div>
       <div class="info">
